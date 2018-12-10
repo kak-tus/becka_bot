@@ -1,2 +1,3 @@
-# becka_bot
-Becka AntiFlood bot
+# @becka_bot
+
+Becka AntiFlood bot for Telegram.
