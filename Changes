@@ -1,2 +1,5 @@
+2018-12-11 v0.1.2
+  - Also delete messages (restrict works only in supergroups).
+
 2018-12-11 v0.1.1
   - First quick release.

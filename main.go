@@ -130,7 +130,19 @@ func main() {
 							continue
 						}
 
-						log.Debug(res.Description)
+						log.Debug("Restrict result: " + res.Description)
+
+						res, err = bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
+							ChatID:    upd.Message.Chat.ID,
+							MessageID: upd.Message.MessageID,
+						})
+
+						if err != nil {
+							log.Error(err)
+							continue
+						}
+
+						log.Debug("Delete result: " + res.Description)
 					}
 				}
 			}
