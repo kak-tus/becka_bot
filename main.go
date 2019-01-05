@@ -127,7 +127,6 @@ func main() {
 
 						if err != nil {
 							log.Error(err)
-							continue
 						}
 
 						log.Debug("Restrict result: " + res.Description)
@@ -139,7 +138,6 @@ func main() {
 
 						if err != nil {
 							log.Error(err)
-							continue
 						}
 
 						log.Debug("Delete result: " + res.Description)
