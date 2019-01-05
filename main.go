@@ -111,27 +111,9 @@ func main() {
 					}
 
 					if res > 10 {
-						log.Debugf("Restrict %s for %d", upd.Message.From.UserName, res)
+						log.Debugf("Delete %s for %d", upd.Message.From.UserName, res)
 
-						dt := time.Now().AddDate(0, 0, 1).Unix()
-						can := false
-
-						res, err := bot.RestrictChatMember(tgbotapi.RestrictChatMemberConfig{
-							ChatMemberConfig: tgbotapi.ChatMemberConfig{
-								ChatID: upd.Message.Chat.ID,
-								UserID: upd.Message.From.ID,
-							},
-							UntilDate:            dt,
-							CanSendMediaMessages: &can,
-						})
-
-						if err != nil {
-							log.Error(err)
-						}
-
-						log.Debug("Restrict result: " + res.Description)
-
-						res, err = bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
+						res, err := bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
 							ChatID:    upd.Message.Chat.ID,
 							MessageID: upd.Message.MessageID,
 						})
