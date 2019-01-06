@@ -61,18 +61,21 @@ func main() {
 		}
 
 		rDB := redis.NewClusterClient(ropt)
-		rDB.Ping()
 
 		log := applog.GetLogger().Sugar()
 
-		dialer, err := proxy.SOCKS5("tcp", cnf.Telegram.Proxy, nil, proxy.Direct)
-		if err != nil {
-			return err
+		httpTransport := &http.Transport{}
+
+		if len(cnf.Telegram.Proxy) > 0 {
+			dialer, err := proxy.SOCKS5("tcp", cnf.Telegram.Proxy, nil, proxy.Direct)
+			if err != nil {
+				return err
+			}
+
+			httpTransport.Dial = dialer.Dial
 		}
 
-		httpTransport := &http.Transport{}
 		httpClient := &http.Client{Transport: httpTransport}
-		httpTransport.Dial = dialer.Dial
 
 		bot, err := tgbotapi.NewBotAPIWithClient(cnf.Telegram.Token, httpClient)
 		if err != nil {
