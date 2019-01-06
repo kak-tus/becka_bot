@@ -96,7 +96,7 @@ func main() {
 					continue
 				}
 
-				if upd.Message.Sticker != nil || upd.Message.Photo != nil {
+				if upd.Message.Sticker != nil {
 					key := fmt.Sprintf("becka{%d}", upd.Message.From.ID)
 					res, err := rDB.Incr(key).Result()
 					if err != nil {
@@ -113,7 +113,7 @@ func main() {
 					if res > 10 {
 						log.Debugf("Delete %s for %d", upd.Message.From.UserName, res)
 
-						res, err := bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
+						_, err := bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
 							ChatID:    upd.Message.Chat.ID,
 							MessageID: upd.Message.MessageID,
 						})
@@ -121,8 +121,6 @@ func main() {
 						if err != nil {
 							log.Error(err)
 						}
-
-						log.Debug("Delete result: " + res.Description)
 					}
 				}
 			}
