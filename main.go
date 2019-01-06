@@ -91,6 +91,10 @@ func main() {
 
 		updates := bot.ListenForWebhook("/" + cnf.Telegram.Path)
 
+		http.HandleFunc("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, "ok")
+		})
+
 		go http.ListenAndServe("0.0.0.0:8080", nil)
 
 		go func() {
