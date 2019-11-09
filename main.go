@@ -66,7 +66,7 @@ func main() {
 	}
 
 	var cnf beckaConf
-	if err := conf.Decode(configRaw, &cnf); err != nil {
+	if err := conf.Decode(configRaw["becka"], &cnf); err != nil {
 		log.Panic(err)
 	}
 
