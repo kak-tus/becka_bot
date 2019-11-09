@@ -1,19 +1,22 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
 	"time"
 
-	"git.aqq.me/go/app/appconf"
-	"git.aqq.me/go/app/applog"
-	"git.aqq.me/go/app/launcher"
 	"github.com/go-redis/redis"
-	"github.com/go-telegram-bot-api/telegram-bot-api"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/iph0/conf"
 	"github.com/iph0/conf/envconf"
 	"github.com/iph0/conf/fileconf"
+	"go.uber.org/zap"
 	"golang.org/x/net/proxy"
 )
 
@@ -33,106 +36,142 @@ type beckaConf struct {
 	Redis    redisConf
 }
 
-func init() {
+func main() {
+	logger, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+
+	log := logger.Sugar()
+
 	fileLdr := fileconf.NewLoader("etc", "/etc")
 	envLdr := envconf.NewLoader()
 
-	appconf.RegisterLoader("file", fileLdr)
-	appconf.RegisterLoader("env", envLdr)
+	configProc := conf.NewProcessor(
+		conf.ProcessorConfig{
+			Loaders: map[string]conf.Loader{
+				"file": fileLdr,
+				"env":  envLdr,
+			},
+		},
+	)
 
-	appconf.Require("file:becka.yml")
-	appconf.Require("env:^BECKA_")
-}
+	configRaw, err := configProc.Load(
+		"file:becka.yml",
+		"env:^BECKA_",
+	)
 
-func main() {
-	launcher.Run(func() error {
-		cnfMap := appconf.GetConfig()["becka"]
+	if err != nil {
+		log.Panic(err)
+	}
 
-		var cnf beckaConf
-		err := conf.Decode(cnfMap, &cnf)
+	var cnf beckaConf
+	if err := conf.Decode(configRaw, &cnf); err != nil {
+		log.Panic(err)
+	}
+
+	addrs := strings.Split(cnf.Redis.Addrs, ",")
+
+	ropt := &redis.ClusterOptions{
+		Addrs: addrs,
+	}
+
+	rDB := redis.NewClusterClient(ropt)
+
+	httpTransport := &http.Transport{}
+
+	if len(cnf.Telegram.Proxy) > 0 {
+		dialer, err := proxy.SOCKS5("tcp", cnf.Telegram.Proxy, nil, proxy.Direct)
 		if err != nil {
-			return err
+			log.Panic(err)
 		}
 
-		addrs := strings.Split(cnf.Redis.Addrs, ",")
+		httpTransport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			done := make(chan bool)
+			var con net.Conn
+			var err error
 
-		ropt := &redis.ClusterOptions{
-			Addrs: addrs,
+			go func() {
+				con, err = dialer.Dial(network, addr)
+				done <- true
+			}()
+
+			select {
+			case <-ctx.Done():
+				return nil, errors.New("Dial timeout")
+			case <-done:
+				return con, err
+			}
 		}
+	}
 
-		rDB := redis.NewClusterClient(ropt)
+	httpClient := &http.Client{Transport: httpTransport}
 
-		log := applog.GetLogger().Sugar()
+	bot, err := tgbotapi.NewBotAPIWithClient(cnf.Telegram.Token, httpClient)
+	if err != nil {
+		log.Panic(err)
+	}
 
-		httpTransport := &http.Transport{}
+	res, err := bot.SetWebhook(tgbotapi.NewWebhook(cnf.Telegram.URL + cnf.Telegram.Path))
+	if err != nil {
+		log.Panic(err)
+	}
 
-		if len(cnf.Telegram.Proxy) > 0 {
-			dialer, err := proxy.SOCKS5("tcp", cnf.Telegram.Proxy, nil, proxy.Direct)
-			if err != nil {
-				return err
+	log.Debug(res.Description)
+
+	updates := bot.ListenForWebhook("/" + cnf.Telegram.Path)
+
+	http.HandleFunc("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	})
+
+	go func() {
+		if err := http.ListenAndServe("0.0.0.0:8080", nil); err != nil {
+			log.Panic(err)
+		}
+	}()
+
+	go func() {
+		for upd := range updates {
+			if upd.Message == nil {
+				continue
 			}
 
-			httpTransport.Dial = dialer.Dial
-		}
-
-		httpClient := &http.Client{Transport: httpTransport}
-
-		bot, err := tgbotapi.NewBotAPIWithClient(cnf.Telegram.Token, httpClient)
-		if err != nil {
-			return err
-		}
-
-		res, err := bot.SetWebhook(tgbotapi.NewWebhook(cnf.Telegram.URL + cnf.Telegram.Path))
-		if err != nil {
-			return err
-		}
-
-		log.Debug(res.Description)
-
-		updates := bot.ListenForWebhook("/" + cnf.Telegram.Path)
-
-		http.HandleFunc("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprint(w, "ok")
-		})
-
-		go http.ListenAndServe("0.0.0.0:8080", nil)
-
-		go func() {
-			for upd := range updates {
-				if upd.Message == nil {
+			if upd.Message.Sticker != nil {
+				key := fmt.Sprintf("becka{%d}", upd.Message.From.ID)
+				res, err := rDB.Incr(key).Result()
+				if err != nil {
 					continue
 				}
 
-				if upd.Message.Sticker != nil {
-					key := fmt.Sprintf("becka{%d}", upd.Message.From.ID)
-					res, err := rDB.Incr(key).Result()
+				if res == 1 {
+					err = rDB.Expire(key, time.Hour*24).Err()
 					if err != nil {
 						continue
 					}
+				}
 
-					if res == 1 {
-						err = rDB.Expire(key, time.Hour*24).Err()
-						if err != nil {
-							continue
-						}
-					}
+				if res > 10 {
+					log.Debugf("Delete %s for %d", upd.Message.From.UserName, res)
 
-					if res > 10 {
-						log.Debugf("Delete %s for %d", upd.Message.From.UserName, res)
+					_, err := bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
+						ChatID:    upd.Message.Chat.ID,
+						MessageID: upd.Message.MessageID,
+					})
 
-						_, err := bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
-							ChatID:    upd.Message.Chat.ID,
-							MessageID: upd.Message.MessageID,
-						})
-
-						if err != nil {
-							log.Error(err)
-						}
+					if err != nil {
+						log.Error(err)
 					}
 				}
 			}
-		}()
+		}
+	}()
 
-		return nil
-	})
+	st := make(chan os.Signal, 1)
+	signal.Notify(st, os.Interrupt)
+
+	<-st
+	log.Info("Stop")
+
+	_ = log.Sync()
 }
